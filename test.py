@@ -39,6 +39,7 @@ Two things in particular:
 
 """
 
+import os
 import re
 import sys
 
@@ -113,7 +114,7 @@ class Question:
         out = f"[{self.element}]\n\n"
         out += fill(self.question) + "\n\n"
         for label, text in self.options:
-            out += "\n".join(wrap(f"{label.name}. {text}", subsequent_indent='  ')) + "\n"
+            out += "\n".join(wrap(f"{label.name}. {text}", subsequent_indent='   ')) + "\n"
         return out
 
 
@@ -123,14 +124,16 @@ class QuestionPool:
     """
     
     def __init__(self) -> None:
-        self.questions: set[Question] = set()
+        self.questions: list[Question] = list()
         
     def __len__(self) -> int:
         return len(self.questions)
     
     def add_question(self, question: Question) -> None:
-        self.questions.add(question)
-        
+        self.questions.append(question)
+
+    def get_question_at(self, index) -> Question:
+        return self.questions[index]
 
 class TokenType(Enum):
     """
@@ -167,11 +170,10 @@ class Tokenizer:
     Methods to get, peek, and unget.
     """
 
-    tokens: list[Token] = []
-    index: int = 0
-    last: int = 0
-    
     def __init__(self, filename: str) -> None:
+        self.tokens: list[Token] = []
+        self.index = 0
+        self.last = 0
         # This looks pretty inefficient.
         tok_p = re.compile(r"(-{2,}|\W)")
         num_p = re.compile(r"^\d+$")
@@ -181,7 +183,7 @@ class Tokenizer:
                 for word in re.split(tok_p, line):
                     if word == '\n':
                         self.tokens.append(Token(TokenType.EOL, word))
-                    elif word == ' ':\
+                    elif word == ' ':
                         self.tokens.append(Token(TokenType.SPACE, word))
                     elif word == '*':
                         self.tokens.append(Token(TokenType.ASTERISK, word))
@@ -246,17 +248,15 @@ class Tokenizer:
 
 class QuestionParser:
 
-    tokens: Tokenizer = None
-    questions: QuestionPool = QuestionPool()
-    subelement: str = ""
-    current_group: str = ""
-    current_option: Option = None
-    current_question = None
-    error: str = ""
-    state: State = State.START
-
-    def __init__(self, test_level: str) -> None:
-        self.tokens = Tokenizer("/Users/jed/code/ham-tests/general/G1.txt")
+    def __init__(self, question_pool: QuestionPool, file_path: str) -> None:
+        self.file_path = file_path
+        self.tokens = Tokenizer(file_path)
+        self.subelement = ""
+        self.current_option = None
+        self.current_question = None
+        self.error = ""
+        self.state = State.START
+        self.questions = question_pool
         
     def _read_kv_pair_str(self) -> tuple[str, str]:
         """Convenience to read "Key: Some value" lines"""
@@ -433,22 +433,40 @@ class QuestionParser:
                     
                     # If we read all the options, look for the next question.
                     if letter == 'D':
-                        print(self.current_question.formatted())
-                        self.state = State.GROUP_OR_QUESTION
+                        # End of file ahead?
+                        consumed = self.tokens.consume_ws()
+                        if self.tokens.peek().type == TokenType.EOF:
+                            self.state = State.DONE
+                        else:
+                            self.tokens.unget(consumed)
+                            self.state = State.GROUP_OR_QUESTION
                         
                 case State.DONE:
                     "Done reading this file"
-                    print(f"Done. Read {len(self.questions)} questions.")
+                    print(f"Read {len(self.questions)} questions from {self.file_path}.")
                     return
                         
                 case _:
                     raise Exception(f"Unhandled state: {self.state}")
 
 
+class QuestionAggregator:
+
+    question_pool: QuestionPool = QuestionPool()
+
+    def aggregate(self, exam_level: str) -> None:
+        cwd = os.getcwd()
+        for filename in os.listdir(os.path.join(cwd, exam_level)):
+            filepath = os.path.join(cwd, exam_level, filename)
+            question_parser = QuestionParser(self.question_pool, filepath)
+            question_parser.parse()
+
+        # For testing, just pick one at random
+        print(self.question_pool.get_question_at(42).formatted())
 
 def main() -> int:
-    questions = QuestionParser("general")
-    questions.parse()
+    question_aggregator = QuestionAggregator()
+    question_aggregator.aggregate('general')
     return 1
 
 
