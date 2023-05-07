@@ -40,6 +40,7 @@ Two things in particular:
 """
 
 import os
+import random
 import re
 import sys
 
@@ -433,6 +434,10 @@ class QuestionParser:
                     
                     # If we read all the options, look for the next question.
                     if letter == 'D':
+                        # Sanity-check
+                        if not self.current_question.is_valid():
+                            self.fail(f"Invalid question:\n{self.current_question.formatted()}")
+
                         # End of file ahead?
                         consumed = self.tokens.consume_ws()
                         if self.tokens.peek().type == TokenType.EOF:
@@ -452,7 +457,9 @@ class QuestionParser:
 
 class QuestionAggregator:
 
-    question_pool: QuestionPool = QuestionPool()
+    def __init__(self):
+        self.question_pool: QuestionPool = QuestionPool()
+        self.weights = []
 
     def aggregate(self, exam_level: str) -> None:
         cwd = os.getcwd()
@@ -461,12 +468,52 @@ class QuestionAggregator:
             question_parser = QuestionParser(self.question_pool, filepath)
             question_parser.parse()
 
-        # For testing, just pick one at random
-        print(self.question_pool.get_question_at(42).formatted())
+        # Initialize weights
+        self.weights = [1] * len(self.question_pool)
+
+    def select_random(self) -> Question:
+        return random.choices(
+            population = self.question_pool.questions,
+            weights = self.weights,
+            k = 1
+        )[0]
+
+    def guess(self, question: Question, letter: Option) -> Option:
+        index = self.question_pool.questions.index(question)
+        if question.correct == letter:
+            self.weights[index] = max(self.weights[index] / 3, 1)
+        else:
+            self.weights[index] = min(self.weights[index] * 3, len(self.question_pool) / 2)
+        return question.correct
+
+    def repl(self) -> None:
+        keystroke = ""
+        while keystroke.lower() != "q":
+            question = self.select_random()
+            print("-----------------------------------------------------------")
+            print(question.formatted())
+
+            keystroke_valid = False
+            while not keystroke_valid:
+                keystroke = input("[a, b, c, d, q] > ")
+
+                if keystroke.lower() == 'q':
+                    print("Ok\n")
+                    keystroke_valid = True
+
+                elif keystroke.upper() in ['A', 'B', 'C', 'D']:
+                    keystroke_valid = True
+                    option = Option(keystroke.upper())
+                    correct = self.guess(question, option)
+                    if option == correct:
+                        print("Yay\n")
+                    else:
+                        print(f"Alas. The correct answer was: {correct.value}\n")
 
 def main() -> int:
-    question_aggregator = QuestionAggregator()
-    question_aggregator.aggregate('general')
+    questions = QuestionAggregator()
+    questions.aggregate('general')
+    questions.repl()
     return 1
 
 

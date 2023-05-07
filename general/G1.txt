@@ -218,12 +218,12 @@ G1B08
 When choosing a transmitting frequency, what should you do to comply with good
 amateur practice?
 --
- A. Ensure that the frequencyand mode selected are withing your amateur license
+ A. Ensure that the frequency and mode selected are withing your amateur license
     class privilege
  B. Follow generally accepted band plans agreed to by the Amateur Radio
     community
  C. Monitor the frequency before transmitting
- D. All these choices are correct
+*D. All these choices are correct
 
 G1B09
 On what HF frequencies are automatically controlled beacons permitted?

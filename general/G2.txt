@@ -295,7 +295,7 @@ What does the Q signal "QSL" mean?
 --
  A. Send slower
  B. I have already confirmed by card
- C. I acknowledge receipt
+*C. I acknowledge receipt
  D. We have worked before
 
 G2C10
@@ -392,7 +392,7 @@ What is a reason why many amateurs keep a station log?
  B. The ITU requires a log of all international third-party traffic
  C. The log provides evidence of operation needed to renew a license without
     retest
- D. To help with a reply if the FCC requests information
+*D. To help with a reply if the FCC requests information
 
 G2D09
 Which of the following is required when participating in a contest on HF
