@@ -74,20 +74,23 @@ class Option(Enum):
 class Question:
     """
     Contents of a ham radio exam question:
-    - Element (e.g., G1A08)
+    - Number (e.g., G1A08)
     - Question text
     - Group of four multiple choice questions (options)
     - The letter of the correct choice
     """
     
     def __init__(self) -> None:
-        self.element = None
+        self.number = None
         self.question = None
         self.options: list[tuple[Option, str]] = []
         self.correct = None
+
+    def get_subelement_name(self) -> str:
+        return self.number[:2]
     
-    def set_element(self, text: str) -> None:
-        self.element = text.strip()
+    def set_number(self, text: str) -> None:
+        self.number = text.strip()
     
     def set_question(self, text: str) -> None:
         self.question = text.strip()
@@ -100,7 +103,7 @@ class Question:
         self.correct = label
 
     def is_valid(self) -> bool:
-        if not self.element:
+        if not self.number:
             return False
         if not self.question:
             return False
@@ -112,12 +115,22 @@ class Question:
     
     def formatted(self) -> str:
         "Printable formatted text representation. Like in the book."
-        out = f"[{self.element}]\n\n"
+        out = f"[{self.number}]\n\n"
         out += fill(self.question) + "\n\n"
         for label, text in self.options:
             out += "\n".join(wrap(f"{label.name}. {text}", subsequent_indent='   ')) + "\n"
         return out
 
+@dataclass
+class Subelement:
+
+    name: str
+    title: str
+    questions: int
+    groups: int
+
+    def contains(self, question: Question) -> bool:
+        return question.number.name.startswith(self.name)
 
 class QuestionPool:
     """
@@ -126,15 +139,25 @@ class QuestionPool:
     
     def __init__(self) -> None:
         self.questions: list[Question] = list()
+        self.subelements: list[Subelement] = list()
         
     def __len__(self) -> int:
         return len(self.questions)
     
+    def add_subelement(self, subelement: Subelement) -> None:
+        self.subelements.append(subelement)
+
     def add_question(self, question: Question) -> None:
         self.questions.append(question)
 
-    def get_question_at(self, index) -> Question:
+    def get_elements(self) -> list[Subelement]:
+        return self.subelements
+
+    def get_question_at(self, index: int) -> Question:
         return self.questions[index]
+
+    def get_questions_for_element(self, element: Subelement) -> list[Question]:
+        return [q for q in self.questions if q.number.startswith(element.name)]
 
 class TokenType(Enum):
     """
@@ -255,6 +278,11 @@ class QuestionParser:
         self.subelement = ""
         self.current_option = None
         self.current_question = None
+        self.current_subelement_name = ""
+        self.current_subelement_title = ""
+        self.current_subelement_groups = 0
+        self.current_subelement_questions = 0
+        self.current_group = ""
         self.error = ""
         self.state = State.START
         self.questions = question_pool
@@ -303,7 +331,7 @@ class QuestionParser:
                         self.error = f"Expected Subelement: Got '{label}'"
                         self.state = State.ERROR
                     else:
-                        # Don't actually care about text
+                        self.current_subelement_name = text
                         self.state = State.TITLE
                         self.tokens.consume_ws()
                     
@@ -315,7 +343,7 @@ class QuestionParser:
                         self.error = f"Expected Title: Got '{label}'"
                         self.state = State.ERROR
                     else:
-                        # Don't actually care about text
+                        self.current_subelement_title = text
                         self.state = State.QUESTIONS
                         self.tokens.consume_ws()
 
@@ -327,7 +355,7 @@ class QuestionParser:
                         self.error = f"Expected Questions count: Got: {label}: {count}"
                         self.state = State.ERROR
                     else:
-                        # TODO: Store me somewhere
+                        self.current_subelement_questions = count
                         self.state = State.GROUPS
 
                 case State.GROUPS:
@@ -339,7 +367,15 @@ class QuestionParser:
                         self.error = "Expected GROUPS count"
                         self.state = State.ERROR
                     else:
-                        # TODO: Store me somewhere
+                        self.current_subelement_groups = count
+                        self.questions.add_subelement(
+                            Subelement(
+                                name = self.current_subelement_name,
+                                title = self.current_subelement_title,
+                                questions = self.current_subelement_questions,
+                                groups = self.current_subelement_groups
+                            )
+                        )
                         self.state = State.GROUP_OR_QUESTION
                         
                 case State.GROUP_OR_QUESTION:
@@ -365,7 +401,8 @@ class QuestionParser:
                     "Update the current group name"
                     label, text = self._read_kv_pair_str()
                     assert(label == "Group")
-                    self.current_group = text
+                    # Maybe we will want this in the future.
+                    # Add a title to it or something.
                     self.state = State.QUESTION
                     
                 case State.QUESTION:
@@ -388,7 +425,7 @@ class QuestionParser:
                             break
                     text = "".join(words).strip()
 
-                    self.current_question.set_element(question_id)
+                    self.current_question.set_number(question_id)
                     self.current_question.set_question(text)
                     self.state = State.OPTION
                     
@@ -455,41 +492,46 @@ class QuestionParser:
                     raise Exception(f"Unhandled state: {self.state}")
 
 
-class QuestionAggregator:
+class QuizApp:
 
     def __init__(self):
         self.question_pool: QuestionPool = QuestionPool()
-        self.weights = []
+        self.subelement_question_map = {}
+        self.question_weight_map = {}
 
-    def aggregate(self, exam_level: str) -> None:
+    def load_questions(self, exam_level: str) -> None:
         cwd = os.getcwd()
         for filename in os.listdir(os.path.join(cwd, exam_level)):
             filepath = os.path.join(cwd, exam_level, filename)
             question_parser = QuestionParser(self.question_pool, filepath)
             question_parser.parse()
 
-        # Initialize weights
-        self.weights = [1] * len(self.question_pool)
+        for subelement in self.question_pool.subelements:
+            self.subelement_question_map[subelement.name] = []
 
-    def select_random(self) -> Question:
+        for question in self.question_pool.questions:
+            self.subelement_question_map[question.get_subelement_name()].append(question)
+            self.question_weight_map[question.number] = 1
+
+    def select_random(self, question_set: list[Question]) -> Question:
         return random.choices(
-            population = self.question_pool.questions,
-            weights = self.weights,
+            population = question_set,
+            weights = [self.question_weight_map[q.number] for q in question_set],
             k = 1
         )[0]
 
     def guess(self, question: Question, letter: Option) -> Option:
         index = self.question_pool.questions.index(question)
         if question.correct == letter:
-            self.weights[index] = max(self.weights[index] / 3, 1)
+            self.question_weight_map[index] = max(self.question_weight_map[question.number] / 3, 1)
         else:
-            self.weights[index] = min(self.weights[index] * 3, len(self.question_pool) / 2)
+            self.question_weight_map[index] = min(self.question_weight_map[question.number] * 3, len(self.question_pool) / 2)
         return question.correct
 
-    def repl(self) -> None:
+    def quiz(self, question_set: list[Question]) -> None:
         keystroke = ""
         while keystroke.lower() != "q":
-            question = self.select_random()
+            question = self.select_random(question_set)
             print("-----------------------------------------------------------")
             print(question.formatted())
 
@@ -510,10 +552,38 @@ class QuestionAggregator:
                     else:
                         print(f"Alas. The correct answer was: {correct.value}\n")
 
+    def main_menu(self) -> None:
+        keystroke = ""
+        while keystroke != "q":
+            i = 1
+            for subelement in self.question_pool.subelements:
+                print(f"[{i}] {subelement.name}: {subelement.title}")
+                i += 1
+            print("[a] All")
+            print("[q] Quit")
+
+            keystroke_valid = False
+            while not keystroke_valid:
+                keystroke = input(f"[1 .. {len(self.question_pool.subelements)}, a, q] > ")
+
+                if keystroke == "q":
+                    keystroke_valid = True
+                    print("Ok")
+
+                if keystroke == "a":
+                    keystroke_valid = True
+                    self.quiz(self.question_pool.questions)
+
+                if keystroke.isdigit() and 1 <= int(keystroke) <= len(self.question_pool.subelements):
+                    keystroke_valid = True
+                    subelement = self.question_pool.subelements[int(keystroke) - 1]
+                    question_set = [q for q in self.question_pool.questions if q.get_subelement_name() == subelement.name]
+                    self.quiz(question_set)
+
 def main() -> int:
-    questions = QuestionAggregator()
-    questions.aggregate('general')
-    questions.repl()
+    questions = QuizApp()
+    questions.load_questions('general')
+    questions.main_menu()
     return 1
 
 
