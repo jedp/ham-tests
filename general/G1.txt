@@ -30,7 +30,6 @@ On which of the following bands is image transmission prohibited?
  C. 20 meters
  D. 12 meters
 
-
 G1A04
 Which of the following amateur bands is restricted to communication only on
 specific channels, rather than frequency ranges?
@@ -102,7 +101,7 @@ of a band, which portion of the voice segment is generally available to them?
 *B. The upper frequency end
  C. The lower frequency end on frequencies below 7.3 MHz, and the upper end on
     frequencies above 14.150 MHz
- C. The upper frequency end on frequencies below 7.3 MHz, and the lower end on
+ D. The upper frequency end on frequencies below 7.3 MHz, and the lower end on
     frequencies above 14.150 MHz
 
 G1A12
@@ -614,7 +613,7 @@ G1E10
 Why should an amateur operator normally avoid transmitting on 14.100, 18.110,
 21.150, 24.930, and 28.200 MHz?
 --
- A. A system of propagation beacon stations operates on those frequencies
+*A. A system of propagation beacon stations operates on those frequencies
  B. A system of automatic digital stations operates on those frequencies
  C. These frequencies are set aside for emergency operations
  D. These frequencies are set aside for bulletins from the FCC
