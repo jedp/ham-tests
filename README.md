@@ -1,5 +1,7 @@
 ## Ham Radio license exam quiz generator
 
+Requires **python 3.10 or greater**.
+
 I'm styding for my General class exam and made this to help.
 
 The questions are taken verbatim from http://www.arrl.org/question-pools.
