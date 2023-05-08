@@ -242,10 +242,10 @@ class Question:
             number = self.number,
             question = fill(self.question) + "\n\n",
             correct = self.correct.value,
-            a = "\n".join(wrap(f"   {self.options[0][0].name}. {self.options[0][1]}", subsequent_indent='      ')) + "\n",
-            b = "\n".join(wrap(f"   {self.options[1][0].name}. {self.options[1][1]}", subsequent_indent='      ')) + "\n",
-            c = "\n".join(wrap(f"   {self.options[2][0].name}. {self.options[2][1]}", subsequent_indent='      ')) + "\n",
-            d = "\n".join(wrap(f"   {self.options[3][0].name}. {self.options[3][1]}", subsequent_indent='      ')) + "\n"
+            a = "\n".join(wrap(f"   {self.options[0][0].name}. {self.options[0][1]}", subsequent_indent='       ')) + "\n",
+            b = "\n".join(wrap(f"   {self.options[1][0].name}. {self.options[1][1]}", subsequent_indent='       ')) + "\n",
+            c = "\n".join(wrap(f"   {self.options[2][0].name}. {self.options[2][1]}", subsequent_indent='       ')) + "\n",
+            d = "\n".join(wrap(f"   {self.options[3][0].name}. {self.options[3][1]}", subsequent_indent='       ')) + "\n"
         )
 
 
