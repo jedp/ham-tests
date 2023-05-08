@@ -12,6 +12,7 @@ questions you are wobbly on. As you answer questions correctly with regularity,
 the likelihood of being asked those questions returns to normal.
 """
 
+import curses
 import os
 import random
 import re
@@ -167,6 +168,18 @@ class Option(Enum):
     D = "D"
 
 
+@dataclass
+class FormattedQuestion:
+
+    number: str
+    question: str
+    correct: str
+    a: str
+    b: str
+    c: str
+    d: str
+
+
 class Question:
     """
     Contents of a ham radio exam question:
@@ -182,7 +195,7 @@ class Question:
         self.question = None
         self.chapter_and_verse = ""
         self.options: list[tuple[Option, str]] = []
-        self.correct = None
+        self.correct: Option = Option.A
 
     def get_subelement_name(self) -> str:
         return self.number[:2]
@@ -223,6 +236,18 @@ class Question:
         for label, text in self.options:
             out += "\n".join(wrap(f"  {label.name}. {text}", subsequent_indent='      ')) + "\n"
         return out
+
+    def elements_formatted(self) -> FormattedQuestion:
+        return FormattedQuestion(
+            number = self.number,
+            question = fill(self.question) + "\n\n",
+            correct = self.correct.value,
+            a = "\n".join(wrap(f"   {self.options[0][0].name}. {self.options[0][1]}", subsequent_indent='      ')) + "\n",
+            b = "\n".join(wrap(f"   {self.options[1][0].name}. {self.options[1][1]}", subsequent_indent='      ')) + "\n",
+            c = "\n".join(wrap(f"   {self.options[2][0].name}. {self.options[2][1]}", subsequent_indent='      ')) + "\n",
+            d = "\n".join(wrap(f"   {self.options[3][0].name}. {self.options[3][1]}", subsequent_indent='      ')) + "\n"
+        )
+
 
 @dataclass
 class Subelement:
@@ -488,14 +513,19 @@ class ScoreKeeper:
         return self.errors[question.number]
 
 
-class QuizApp:
+class ChoiceColor(Enum):
+    NO = 1
+    YES = 2
 
-    def __init__(self):
+class CursesApp:
+
+    def __init__(self, exam_level: str) -> None:
+        self.stdscr = None
         self.question_pool: QuestionPool = QuestionPool()
         self.scorekeeper = ScoreKeeper()
         self.subelement_question_map = {}
 
-    def load_questions(self, exam_level: str) -> None:
+        # Load questions
         cwd = os.getcwd()
         filepath = os.path.join(cwd, 'pools', exam_level+'.txt')
         question_parser = QuestionParser(self.question_pool, filepath)
@@ -507,7 +537,19 @@ class QuizApp:
         for question in self.question_pool.questions:
             self.subelement_question_map[question.get_subelement_name()].append(question)
 
-    def select_random(self, question_set: list[Question]) -> Question:
+    def _load_questions(self, exam_level: str) -> None:
+        cwd = os.getcwd()
+        filepath = os.path.join(cwd, 'pools', exam_level+'.txt')
+        question_parser = QuestionParser(self.question_pool, filepath)
+        question_parser.parse()
+
+        for subelement in self.question_pool.subelements:
+            self.subelement_question_map[subelement.name] = []
+
+        for question in self.question_pool.questions:
+            self.subelement_question_map[question.get_subelement_name()].append(question)
+
+    def _select_question(self, question_set: list[Question]) -> Question:
         """
         Weighted random choice: Questions that have been answered wrong are
         more likely to be chosen than other questions.
@@ -519,71 +561,161 @@ class QuizApp:
             k = 1
         )[0]
 
-    def guess(self, question: Question, letter: Option) -> Option:
+    def _guess(self, question: Question, letter: Option) -> Option:
         if question.correct == letter:
             self.scorekeeper.right_answer(question)
         else:
             self.scorekeeper.wrong_answer(question)
         return question.correct
 
-    def quiz(self, question_set: list[Question]) -> None:
-        keystroke = ""
-        while keystroke.lower() != "q":
-            question = self.select_random(question_set)
-            print("-----------------------------------------------------------\n")
-            print(question.formatted())
+    def _quiz(self, question_set: list[Question]) -> None:
+        self.stdscr.clear()
+        self.stdscr.refresh()
+        choices = '[a, b, c, d, q]'
+        # Keep track of colors for the four options.
+        # They'll be highlighted when selected,
+        # And red or green for wrong/right guesses.
+        colors = {
+            'A': curses.A_NORMAL,
+            'B': curses.A_NORMAL,
+            'C': curses.A_NORMAL,
+            'D': curses.A_NORMAL
+        }
 
-            keystroke_valid = False
-            while not keystroke_valid:
-                keystroke = input("[a, b, c, d, q] > ")
+        action = -1   # getch()
+        selected = "" # Selected option
 
-                if keystroke.lower() == 'q':
-                    print("Ok\n")
-                    keystroke_valid = True
+        question = self._select_question(question_set)
+        formatted = question.elements_formatted()
 
-                elif keystroke.upper() in ['A', 'B', 'C', 'D']:
-                    keystroke_valid = True
-                    option = Option(keystroke.upper())
-                    correct = self.guess(question, option)
-                    if option == correct:
-                        print("\n***Yay*** \o/\n")
-                    else:
-                        print(f"\nAlas. The correct answer was: {correct.value}\n")
+        while action != ord('q'):
+            self.stdscr.clear()
+            # Print the question
+            row = 3
+            self.stdscr.addstr(row, 0, formatted.number)
+            row += 1
+            self.stdscr.addstr(row, 0, formatted.question)
+            row += formatted.question.count("\n")
+            # Print the four options
+            self.stdscr.addstr(row, 0, formatted.a, colors['A'])
+            row += formatted.a.count("\n")
+            self.stdscr.addstr(row, 0, formatted.b, colors['B'])
+            row += formatted.b.count("\n")
+            self.stdscr.addstr(row, 0, formatted.c, colors['C'])
+            row += formatted.c.count("\n")
+            self.stdscr.addstr(row, 0, formatted.d, colors['D'])
+            row += formatted.d.count("\n")
+            row +=2
+            # Print a menu of choices
+            self.stdscr.addstr(row, 0, choices)
 
-    def main_menu(self) -> None:
-        keystroke = ""
-        while keystroke != "q":
-            i = 1
-            for subelement in self.question_pool.subelements:
-                print(f"[{i}] {subelement.name}: {subelement.title}")
-                i += 1
-            print("[a] All")
-            print("[q] Quit")
+            self.stdscr.refresh()
+            action = self.stdscr.getch()
 
-            keystroke_valid = False
-            while not keystroke_valid:
-                keystroke = input(f"[1 .. {len(self.question_pool.subelements)}, a, q] > ")
+            if ord('a') <= action <= ord('d'):
+                # Selected a, b, c, or d
+                selected = chr(action).upper()
+                choices = '[a, b, c, d, q; Enter to select]'
+                colors = dict.fromkeys(colors, curses.A_NORMAL)
+                colors[selected] = curses.A_STANDOUT
 
-                if keystroke == "q":
-                    keystroke_valid = True
-                    print("Ok")
+            elif selected and (action == curses.KEY_ENTER or action == 10 or action == 13):
+                # Hit enter to confirm selection
+                if question.correct.value == selected:
+                    colors[selected] = curses.color_pair(ChoiceColor.YES.value)
+                else:
+                    colors[selected] = curses.color_pair(ChoiceColor.NO.value)
+                    colors[question.correct.value] = curses.color_pair(ChoiceColor.YES.value)
+                choices = '[q; n for Next]'
 
-                if keystroke == "a":
-                    keystroke_valid = True
-                    self.quiz(self.question_pool.questions)
+            elif action == ord('n'):
+                # Next question
+                question = self._select_question(question_set)
+                formatted = question.elements_formatted()
+                # Reset colors and choices menu
+                colors = dict.fromkeys(colors, curses.A_NORMAL)
+                choices = '[a, b, c, d, q]'
 
-                if keystroke.isdigit() and 1 <= int(keystroke) <= len(self.question_pool.subelements):
-                    keystroke_valid = True
-                    subelement = self.question_pool.subelements[int(keystroke) - 1]
+    def main(self, stdscr) -> None:
+        """
+        Main entry point.
+
+        When invoking, wrap with curses wrapper.
+        """
+        self.stdscr = stdscr
+
+        curses.cbreak()
+        curses.noecho()
+        curses.curs_set(False)
+        curses.start_color()
+        curses.init_pair(ChoiceColor.NO.value, curses.COLOR_BLACK, curses.COLOR_RED)
+        curses.init_pair(ChoiceColor.YES.value, curses.COLOR_BLACK, curses.COLOR_GREEN)
+        stdscr.keypad(True)
+        stdscr.clear()
+
+        action = -1    # getch()
+        menu_rows = [] # This is kind of rude, but it works.
+        i = 1
+        for subelement in self.question_pool.subelements:
+            menu_rows.append(f"[{i}] {subelement.name}: {subelement.title}")
+            i += 1
+        menu_rows.append("[a] All")
+        menu_rows.append("[q] Quit")
+        selection = 0
+
+        while action != ord('q'):
+            stdscr.clear()
+
+            # keep up/down arrow selection in bounds.
+            if selection < 0:
+                selection = 0
+            if selection > len(menu_rows) - 1:
+                selection = len(menu_rows) - 1
+
+            # print all the menu choices
+            for i in range(0, len(menu_rows)):
+                stdscr.addstr(i + 3, 0, menu_rows[i], (i == selection) and curses.A_STANDOUT or curses.A_NORMAL)
+
+            stdscr.refresh()
+
+            action = stdscr.getch()
+
+            if action == ord('a'):
+                selection = len(menu_rows) - 2
+
+            elif ord('1') <= action <= ord('9'):
+                # Sadly you can't select '10' this way.
+                selection = action - ord('1')
+
+            elif action == curses.KEY_UP:
+                # Select previous
+                selection -= 1
+
+            elif action == curses.KEY_DOWN:
+                # Select next
+                selection += 1
+
+            elif action == curses.KEY_ENTER or action == 10 or action == 13:
+                if selection == len(menu_rows) - 1:
+                    action = ord('q')
+                elif selection == len(menu_rows) - 2:
+                    # All
+                    stdscr.clear()
+                    self._quiz(self.question_pool.questions)
+                else:
+                    # Single subelement
+                    stdscr.clear()
+                    subelement = self.question_pool.subelements[selection]
                     question_set = [q for q in self.question_pool.questions if q.get_subelement_name() == subelement.name]
-                    self.quiz(question_set)
+                    self._quiz(question_set)
 
+        # Save and quit
         self.scorekeeper.store_scores()
 
+
 def main() -> int:
-    questions = QuizApp()
-    questions.load_questions('general')
-    questions.main_menu()
+    app = CursesApp('general')
+    curses.wrapper(app.main)
     return 1
 
 
