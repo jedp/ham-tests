@@ -622,8 +622,10 @@ class CursesApp:
             elif selected and (action == curses.KEY_ENTER or action == 10 or action == 13):
                 # Hit enter to confirm selection
                 if question.correct.value == selected:
+                    self.scorekeeper.right_answer(question)
                     colors[selected] = curses.color_pair(ChoiceColor.YES.value)
                 else:
+                    self.scorekeeper.wrong_answer(question)
                     colors[selected] = curses.color_pair(ChoiceColor.NO.value)
                     colors[question.correct.value] = curses.color_pair(ChoiceColor.YES.value)
                 choices = '[q; n for Next]'
