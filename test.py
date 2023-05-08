@@ -433,12 +433,67 @@ class QuestionParser:
                     raise Exception(f"Unhandled state: {self.state}")
 
 
+class ScoreKeeper:
+    """
+    Persist error count for question weighting.
+
+    A higher score means more errors. Minimum score is 0.
+
+    Each wrong answer adds an error to the count. Each right answer subtracts one.
+    """
+
+    def __init__(self) -> None:
+        self.datafile = os.path.join(os.getcwd(), ".ham-test-weights.dat")
+        self.errors = {}
+
+    def get_scores(self, questions: list[Question]) -> dict:
+        """
+        Return a dictionary of errors keyed by question number.
+
+        If the data file exists, load existing scores from it, adding a 0 for
+        any new values.
+
+        If the data file doesn't exist, don't write anything. We can do that
+        when we save at the end.
+        """
+        if len(self.errors) == 0:
+            if os.path.exists(self.datafile):
+                with open(self.datafile, 'r') as f:
+                    self.errors = eval(f.read())
+        # Supplement any missing values
+        for q in questions:
+            if q.number not in self.errors:
+                self.errors[q.number] = 0
+        return self.errors
+
+    def store_scores(self) -> None:
+        """
+        Write the current dictionary of errors to disk.
+        """
+        with open(self.datafile, "w") as f:
+            f.write(str(self.errors))
+
+    def right_answer(self, question: Question) -> int:
+        if question.number not in self.errors:
+            self.errors[question.number] = 0
+        else:
+            self.errors[question.number] = max(self.errors[question.number] - 1, 0)
+        return self.errors[question.number]
+
+    def wrong_answer(self, question: Question) -> int:
+        if question.number not in self.errors:
+            self.errors[question.number] = 1
+        else:
+            self.errors[question.number] = self.errors[question.number] + 1
+        return self.errors[question.number]
+
+
 class QuizApp:
 
     def __init__(self):
         self.question_pool: QuestionPool = QuestionPool()
+        self.scorekeeper = ScoreKeeper()
         self.subelement_question_map = {}
-        self.question_weight_map = {}
 
     def load_questions(self, exam_level: str) -> None:
         cwd = os.getcwd()
@@ -451,21 +506,24 @@ class QuizApp:
 
         for question in self.question_pool.questions:
             self.subelement_question_map[question.get_subelement_name()].append(question)
-            self.question_weight_map[question.number] = 1
 
     def select_random(self, question_set: list[Question]) -> Question:
+        """
+        Weighted random choice: Questions that have been answered wrong are
+        more likely to be chosen than other questions.
+        """
+        error_counts = self.scorekeeper.get_scores(question_set)
         return random.choices(
             population = question_set,
-            weights = [self.question_weight_map[q.number] for q in question_set],
+            weights = [error_counts[q.number] * 3 + 1 for q in question_set],
             k = 1
         )[0]
 
     def guess(self, question: Question, letter: Option) -> Option:
-        index = self.question_pool.questions.index(question)
         if question.correct == letter:
-            self.question_weight_map[index] = max(self.question_weight_map[question.number] / 3, 1)
+            self.scorekeeper.right_answer(question)
         else:
-            self.question_weight_map[index] = min(self.question_weight_map[question.number] * 3, len(self.question_pool) / 2)
+            self.scorekeeper.wrong_answer(question)
         return question.correct
 
     def quiz(self, question_set: list[Question]) -> None:
@@ -519,6 +577,8 @@ class QuizApp:
                     subelement = self.question_pool.subelements[int(keystroke) - 1]
                     question_set = [q for q in self.question_pool.questions if q.get_subelement_name() == subelement.name]
                     self.quiz(question_set)
+
+        self.scorekeeper.store_scores()
 
 def main() -> int:
     questions = QuizApp()
