@@ -1,42 +1,15 @@
 #!/usr/bin/env python3
 """
-Tokenizer, parser, and quiz engine for my human-readable and arbitrary
-ham radio test question file format. Files look like what you get in
-the FCC question format. Example:
+Ham radio test.
 
-```
-Subelement: G1
-Title: Commission's Rules
-Exam Questions: 5
-Groups: 5
+The data files in the pools/ directory are taken from http://www.arrl.org/question-pools.
 
-Group: G1A
+This program parses them and offers to quiz you on specific subelements,
+or all the questions together.
 
-G1A01
-On which HM/MF bands is a General class license holder granted all amateur
-frequency privileges?
---
- A. 60, 20, 17, and 12 meters
- B. 160, 80, 40, and 10 meters
-*C. 160, 60, 30, 17, 12, and 10 meters
- D. 160, 30, 17, 15, 12, and 10 meters
-
-G1A02
-On which of the following bands is phone operations prohibited?
---
- A. 160 meters
-*B. 30 meters
- C. 17 meters
- D. 12 meters
-```
-etc.
-
-A few features make for nice formatting and much easier automatic parsing.
-Two things in particular:
-
-- Questions all end with a "--" on an otherwise empty line.
-- Wrapped lines are all indented deeper than the A, B, C, D letters.
-
+The quiz generator keeps track of errors and increases the likelihood it will select
+questions you are wobbly on. As you answer questions correctly with regularity,
+the likelihood of being asked those questions returns to normal.
 """
 
 import os
@@ -48,131 +21,23 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from textwrap import fill, wrap
 
-class State(Enum):
-    """Question Parser state machine states"""
-    ERROR = -1
-    START = 0
-    SUBELEMENT = 1
-    TITLE = 2
-    QUESTIONS = 3
-    GROUPS = 4
-    GROUP_OR_QUESTION = 5
-    GROUP = 6
-    QUESTION = 7
-    OPTION = 8
-    DONE = 9
-
-
-class Option(Enum):
-    """Multiple choice selection options"""
-    A = "A"
-    B = "B"
-    C = "C"
-    D = "D"
-
-
-class Question:
-    """
-    Contents of a ham radio exam question:
-    - Number (e.g., G1A08)
-    - Question text
-    - Group of four multiple choice questions (options)
-    - The letter of the correct choice
-    """
-    
-    def __init__(self) -> None:
-        self.number = None
-        self.question = None
-        self.options: list[tuple[Option, str]] = []
-        self.correct = None
-
-    def get_subelement_name(self) -> str:
-        return self.number[:2]
-    
-    def set_number(self, text: str) -> None:
-        self.number = text.strip()
-    
-    def set_question(self, text: str) -> None:
-        self.question = text.strip()
-
-    def add_option(self, label: Option, text: str) -> None:
-        assert(len(self.options) <= 4)
-        self.options.append((label, text))
-
-    def set_correct(self, label: Option) -> None:
-        self.correct = label
-
-    def is_valid(self) -> bool:
-        if not self.number:
-            return False
-        if not self.question:
-            return False
-        if len(self.options) != 4:
-            return False
-        if not self.correct:
-            return False
-        return True
-    
-    def formatted(self) -> str:
-        "Printable formatted text representation. Like in the book."
-        out = f"[{self.number}]\n\n"
-        out += fill(self.question) + "\n\n"
-        for label, text in self.options:
-            out += "\n".join(wrap(f"{label.name}. {text}", subsequent_indent='   ')) + "\n"
-        return out
-
-@dataclass
-class Subelement:
-
-    name: str
-    title: str
-    questions: int
-    groups: int
-
-    def contains(self, question: Question) -> bool:
-        return question.number.name.startswith(self.name)
-
-class QuestionPool:
-    """
-    A collection of [Question]s.
-    """
-    
-    def __init__(self) -> None:
-        self.questions: list[Question] = list()
-        self.subelements: list[Subelement] = list()
-        
-    def __len__(self) -> int:
-        return len(self.questions)
-    
-    def add_subelement(self, subelement: Subelement) -> None:
-        self.subelements.append(subelement)
-
-    def add_question(self, question: Question) -> None:
-        self.questions.append(question)
-
-    def get_elements(self) -> list[Subelement]:
-        return self.subelements
-
-    def get_question_at(self, index: int) -> Question:
-        return self.questions[index]
-
-    def get_questions_for_element(self, element: Subelement) -> list[Question]:
-        return [q for q in self.questions if q.number.startswith(element.name)]
-
 class TokenType(Enum):
     """
     Token types for exam text.
     """
     TEXT = 1
-    ASTERISK = auto()
     NUMBER = auto()
     PERIOD = auto()
-    COLON = auto()
     SPACE = auto()
-    EOT = auto()
+    HYPHEN = auto()
     EOL = auto()
+    OPEN_PAREN = auto()
+    CLOSE_PAREN = auto()
+    OPEN_BRACKET = auto()
+    CLOSE_BRACKET = auto()
+    INTERSTICE = auto()
     EOF = auto()
-    
+
 
 @dataclass
 class Token:
@@ -182,15 +47,17 @@ class Token:
 
     type: TokenType
     text: str
-    
+
     def __str__(self) -> str:
         return f"<{self.type}: [{self.text}]>"
-
 
 class Tokenizer:
     """
     Reads a test text file and tokenizes it.
-    
+
+    Be aware that the files have some microsoft-wordy characters in them.
+    They may need some massaging.
+
     Methods to get, peek, and unget.
     """
 
@@ -199,24 +66,32 @@ class Tokenizer:
         self.index = 0
         self.last = 0
         # This looks pretty inefficient.
-        tok_p = re.compile(r"(-{2,}|\W)")
+        tok_p = re.compile(r"(-{2,}|~{2,}|\W)")
         num_p = re.compile(r"^\d+$")
         ws_p = re.compile(r"(\s+)")
         with open(filename, "r") as f:
             for line in f.readlines():
                 for word in re.split(tok_p, line):
-                    if word == '\n':
-                        self.tokens.append(Token(TokenType.EOL, word))
+                    if word in ['\n', '\r']:
+                        self.tokens.append(Token(TokenType.EOL, "\n"))
                     elif word == ' ':
                         self.tokens.append(Token(TokenType.SPACE, word))
-                    elif word == '*':
-                        self.tokens.append(Token(TokenType.ASTERISK, word))
-                    elif word == ':':
-                        self.tokens.append(Token(TokenType.COLON, word))
                     elif word == '.':
                         self.tokens.append(Token(TokenType.PERIOD, word))
-                    elif word == '--':
-                        self.tokens.append(Token(TokenType.EOT, word))
+                    elif word == '-' or word == '–':
+                        self.tokens.append(Token(TokenType.HYPHEN, word))
+                    elif word == '(':
+                        self.tokens.append(Token(TokenType.OPEN_PAREN, word))
+                    elif word == ')':
+                        self.tokens.append(Token(TokenType.CLOSE_PAREN, word))
+                    elif word == '[':
+                        self.tokens.append(Token(TokenType.OPEN_BRACKET, word))
+                    elif word == ']':
+                        self.tokens.append(Token(TokenType.CLOSE_BRACKET, word))
+                    elif word == '~~':
+                        self.tokens.append(Token(TokenType.INTERSTICE, word))
+                    elif word == '~~~':
+                        self.tokens.append(Token(TokenType.EOF, word))
                     elif re.match(num_p, word):
                         self.tokens.append(Token(TokenType.NUMBER, word))
                     elif re.match(ws_p, word):
@@ -225,33 +100,39 @@ class Tokenizer:
                         self.tokens.append(Token(TokenType.TEXT, word))
                     else:
                         self.last -= 1
-                        
+
                     self.last += 1
-             
+
     def peek(self) -> Token:
         if self.index >= self.last:
             return Token(TokenType.EOF, "")
         return self.tokens[self.index]
-    
+
     def get(self) -> Token:
         if self.index >= self.last:
             return Token(TokenType.EOF, "")
         token = self.tokens[self.index]
         self.index += 1
         return token
-        
+
     def next(self) -> Token:
         if self.index >= self.last:
             return Token(TokenType.EOF, "")
         return self.tokens[self.index + 1]
-    
+
     def unget(self, positions = 1) -> None:
         self.index -= positions
         assert(self.index >= 0)
-        
-    def eat(self) -> Token:
-        return self.get()
+
+    def eat(self, token_type: TokenType) -> Token:
+        tok = self.get()
+        assert(tok.type is token_type)
+        return tok
     
+    def eat_through(self, token_type: TokenType) -> Token:
+        self.get_tokens_until(token_type)
+        return self.eat(token_type)
+
     def get_tokens_until(self, token_type: TokenType) -> list[Token]:
         if self.peek().type == TokenType.EOF:
             return []
@@ -270,48 +151,150 @@ class Tokenizer:
             self.index += 1
         return consumed
 
+    def consume_spaces(self) -> int:
+        consumed = 0
+        while self.index != self.last and self.tokens[self.index].type is TokenType.SPACE:
+            consumed += 1
+            self.index += 1
+        return consumed
+
+
+class Option(Enum):
+    """Multiple choice selection options"""
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+
+
+class Question:
+    """
+    Contents of a ham radio exam question:
+    - Number (e.g., G1A08)
+    - Chapter and verse (e.g., 97.303(h))
+    - Question text
+    - Group of four multiple choice questions (options)
+    - The letter of the correct choice
+    """
+
+    def __init__(self) -> None:
+        self.number = None
+        self.question = None
+        self.chapter_and_verse = ""
+        self.options: list[tuple[Option, str]] = []
+        self.correct = None
+
+    def get_subelement_name(self) -> str:
+        return self.number[:2]
+
+    def set_number(self, text: str) -> None:
+        self.number = text.strip()
+
+    def set_question(self, text: str) -> None:
+        self.question = text.strip()
+
+    def set_chapter_and_verse(self, text: str) -> None:
+        self.chapter_and_verse = text.strip()
+
+    def add_option(self, label: Option, text: str) -> None:
+        assert(len(self.options) <= 4)
+        for existing, _ in self.options:
+            assert(label is not existing)
+        self.options.append((label, text))
+
+    def set_correct(self, label: Option) -> None:
+        self.correct = label
+
+    def is_valid(self) -> bool:
+        if not self.number:
+            return False
+        if not self.question:
+            return False
+        if len(self.options) != 4:
+            return False
+        if not self.correct:
+            return False
+        return True
+
+    def formatted(self) -> str:
+        "Printable formatted text representation. Like in the book."
+        out = f"[{self.number}] {self.chapter_and_verse}\n"
+        out += fill(self.question) + "\n\n"
+        for label, text in self.options:
+            out += "\n".join(wrap(f"  {label.name}. {text}", subsequent_indent='      ')) + "\n"
+        return out
+
+@dataclass
+class Subelement:
+
+    name: str
+    title: str
+    questions: int
+    groups: int
+
+    def contains(self, question: Question) -> bool:
+        return question.number.name.startswith(self.name)
+
+class QuestionPool:
+    """
+    A collection of [Question]s.
+    """
+
+    def __init__(self) -> None:
+        self.questions: list[Question] = list()
+        self.subelements: list[Subelement] = list()
+
+    def __len__(self) -> int:
+        return len(self.questions)
+
+    def add_subelement(self, subelement: Subelement) -> None:
+        self.subelements.append(subelement)
+
+    def add_question(self, question: Question) -> None:
+        self.questions.append(question)
+
+    def get_elements(self) -> list[Subelement]:
+        return self.subelements
+
+    def get_question_at(self, index: int) -> Question:
+        return self.questions[index]
+
+    def get_questions_for_element(self, element: Subelement) -> list[Question]:
+        return [q for q in self.questions if q.number.startswith(element.name)]
+
+
+
+class State(Enum):
+    """Question Parser state machine states"""
+    ERROR = -1
+    START = 0
+    PREAMBLE = 1
+    GROUP_OR_QUESTION = 2
+    GROUP = 3
+    QUESTION = 4
+    OPTION = 5
+    DONE = 6
+
+
+
 class QuestionParser:
 
     def __init__(self, question_pool: QuestionPool, file_path: str) -> None:
         self.file_path = file_path
         self.tokens = Tokenizer(file_path)
-        self.subelement = ""
-        self.current_option = None
+        self.subelement = None
         self.current_question = None
-        self.current_subelement_name = ""
-        self.current_subelement_title = ""
-        self.current_subelement_groups = 0
-        self.current_subelement_questions = 0
         self.current_group = ""
         self.error = ""
         self.state = State.START
         self.questions = question_pool
         
-    def _read_kv_pair_str(self) -> tuple[str, str]:
-        """Convenience to read "Key: Some value" lines"""
-        key = self.tokens.get_text_until(TokenType.COLON)
-        assert(self.tokens.eat().type == TokenType.COLON)
-        self.tokens.consume_ws() 
-
-        value = self.tokens.get_text_until(TokenType.EOL)    
-        assert(self.tokens.eat().type == TokenType.EOL)
-        self.tokens.consume_ws()
-        return key, value
-    
-    def _read_kv_pair_num(self) -> tuple[str, int]: 
-        """Convenience to read "Key: IntVal" lines"""
-        key = self.tokens.get_text_until(TokenType.COLON)
-        assert(self.tokens.eat().type == TokenType.COLON)
-        self.tokens.consume_ws() 
-
-        value_tok = self.tokens.get()
-        assert(value_tok.type == TokenType.NUMBER)
-        self.tokens.get_tokens_until(TokenType.EOL)
-        self.tokens.consume_ws()
-        return key, int(value_tok.text)
-    
     def fail(self, msg: str):
         raise Exception(msg)
+
+    def expect(self, condition, msg):
+        if not condition:
+            self.fail(msg)
 
     def parse(self) -> None:
         while True:
@@ -321,168 +304,126 @@ class QuestionParser:
 
                 case State.START:
                     "Start parsing from the beginning of a file"
-                    self.state = State.SUBELEMENT
+                    self.state = State.PREAMBLE
 
-                case State.SUBELEMENT:
-                    "Read the label of the test subelement (e.g., G1)"
-                    label, text = self._read_kv_pair_str()
-                
-                    if label != "Subelement":
-                        self.error = f"Expected Subelement: Got '{label}'"
-                        self.state = State.ERROR
-                    else:
-                        self.current_subelement_name = text
-                        self.state = State.TITLE
-                        self.tokens.consume_ws()
-                    
-                case State.TITLE:
-                    "Read the title of the test subelement"
-                    label, text = self._read_kv_pair_str()
-
-                    if label != "Title":
-                        self.error = f"Expected Title: Got '{label}'"
-                        self.state = State.ERROR
-                    else:
-                        self.current_subelement_title = text
-                        self.state = State.QUESTIONS
-                        self.tokens.consume_ws()
-
-                case State.QUESTIONS:
-                    "Read the number of questions to be selected from these groups for the exam"
-                    label, count = self._read_kv_pair_num()
-
-                    if label != "Exam Questions":
-                        self.error = f"Expected Questions count: Got: {label}: {count}"
-                        self.state = State.ERROR
-                    else:
-                        self.current_subelement_questions = count
-                        self.state = State.GROUPS
-
-                case State.GROUPS:
-                    "Read the number of groups in this subelement"
-                    # Read number of groups
-                    label, count = self._read_kv_pair_num()
-
-                    if label != "Groups":
-                        self.error = "Expected GROUPS count"
-                        self.state = State.ERROR
-                    else:
-                        self.current_subelement_groups = count
-                        self.questions.add_subelement(
-                            Subelement(
-                                name = self.current_subelement_name,
-                                title = self.current_subelement_title,
-                                questions = self.current_subelement_questions,
-                                groups = self.current_subelement_groups
-                            )
-                        )
-                        self.state = State.GROUP_OR_QUESTION
-                        
-                case State.GROUP_OR_QUESTION:
-                    "Determine whether the next object to parse is a Group name or a Question"
-                    question = Question()
-                    self.questions.add_question(question)
-                    self.current_question = question
+                case State.PREAMBLE:
+                    """
+                    The first line of the file is like:
+                    SUBELEMENT G1 – COMMISSION’S RULES [5 Exam Questions – 5 Groups]
+                    """
+                    self.expect(self.tokens.get_text_until(TokenType.SPACE) == "SUBELEMENT",
+                                "Expected SUBELEMENT in preamble")
+                    self.tokens.consume_ws()
+                    name = self.tokens.get_text_until(TokenType.SPACE).strip()
 
                     self.tokens.consume_ws()
-                    this_tok = self.tokens.get()
+                    self.tokens.eat(TokenType.HYPHEN)
+                    self.tokens.consume_ws()
+
+                    title = self.tokens.get_text_until(TokenType.OPEN_BRACKET).strip()
+                    self.tokens.eat(TokenType.OPEN_BRACKET)
+                    question_count = int(self.tokens.get().text)
+                    self.expect(0 < question_count, f"Invalid question count: {question_count}")
+                    self.tokens.get_tokens_until(TokenType.NUMBER)
+                    group_count = int(self.tokens.get().text)
+                    self.expect(0 < group_count, f"Invalid group count: {group_count}")
+
+                    self.tokens.eat_through(TokenType.EOL)
+
+                    self.subelement = Subelement(
+                        name = name,
+                        title = title,
+                        questions = question_count,
+                        groups = group_count
+                    )
+                    self.questions.add_subelement(self.subelement)
+                    self.state = State.GROUP
+
+                case State.GROUP_OR_QUESTION:
+                    """
+                    Determine whether the next object to parse is a Group name or a Question
+                    or whether we have reached the end of the file.
+                    """
                     next_tok = self.tokens.peek()
-                    if next_tok.type == TokenType.EOF:
+                    if next_tok.type is TokenType.EOF:
                         self.state = State.DONE
-                    else: 
-                        if this_tok.text == "Group" and next_tok.type == TokenType.COLON:
-                            self.state = State.GROUP
-                        else:
-                            self.state = State.QUESTION
-                        # Now push back the token we read to figure this out
-                        self.tokens.unget()
+                    elif next_tok.text == "SUBELEMENT":\
+                        self.state = State.PREAMBLE
+                    elif len(next_tok.text) == 5 and next_tok.text.startswith(self.current_group):
+                        self.state = State.QUESTION
+                    else:
+                        self.state = State.GROUP
                 
                 case State.GROUP:
                     "Update the current group name"
-                    label, text = self._read_kv_pair_str()
-                    assert(label == "Group")
+                    name = self.tokens.get_text_until(TokenType.SPACE).strip()
+                    self.expect(name.startswith(self.subelement.name), f"Invalid group name: {name}")
+                    self.current_group = name
+                    self.tokens.eat(TokenType.SPACE)
+                    self.tokens.eat(TokenType.HYPHEN)
+                    self.tokens.eat(TokenType.SPACE)
+                    title = self.tokens.get_text_until(TokenType.EOL).strip()
+                    self.tokens.eat(TokenType.EOL)
                     # Maybe we will want this in the future.
                     # Add a title to it or something.
                     self.state = State.QUESTION
                     
                 case State.QUESTION:
-                    "Parse a question"
-                    # Read the ID, which is like G1A01
-                    self.tokens.consume_ws()
-                    question_id = self.tokens.get().text
-                    if not question_id.startswith(self.current_group):
-                        self.fail(f"Question ID {question_id} does not start with expected group {self.current_group}")
-                    self.tokens.consume_ws()
-                    
-                    # Read the content of the question up to the '--' (EOT) marker
-                    words = []
-                    word_tok = self.tokens.get()
-                    while word_tok.type != TokenType.EOT:
-                        words.append(word_tok.text)
-                        word_tok = self.tokens.get()
-                        if word_tok.type == TokenType.EOF:
-                            self.state = State.DONE
-                            break
-                    text = "".join(words).strip()
+                    """
+                    Parse a question, which is like:
 
-                    self.current_question.set_number(question_id)
-                    self.current_question.set_question(text)
-                    self.state = State.OPTION
+                    G1A02 (B) [97.305]
+                    On which of the following bands is phone operation prohibited?
+                    A. 160 meters
+                    B. 30 meters
+                    C. 17 meters
+                    D. 12 meters
+                    """
+
+                    # The question key, a sequence like G1A02
+                    self.current_question = Question()
+                    key = self.tokens.get_text_until(TokenType.SPACE).strip()
+                    self.expect(key.startswith(self.current_group), f"Out-of-order question key: {key}")
+                    self.current_question.set_number(key)
+
+                    # The correct answer
+                    self.tokens.eat_through(TokenType.OPEN_PAREN)
+                    answer = self.tokens.get().text
+                    self.expect(answer in ['A', 'B', 'C', 'D'], f"Weird correct answer: {answer}")
+                    self.current_question.set_correct(Option(answer))
+                    self.tokens.eat(TokenType.CLOSE_PAREN)
+                    self.tokens.consume_spaces()
                     
+                    # Maybe chapter and verse
+                    chapter_and_verse = self.tokens.get_text_until(TokenType.EOL)
+                    self.tokens.eat(TokenType.EOL)
+                    self.current_question.set_chapter_and_verse(chapter_and_verse)
+
+                    # Read the question
+                    question = self.tokens.get_text_until(TokenType.EOL).strip()
+                    self.expect(len(question) > 0, "Empty question text")
+                    self.tokens.eat(TokenType.EOL)
+                    self.current_question.set_question(question)
+                    self.questions.add_question(self.current_question)
+
+                    self.state = State.OPTION
+
                 case State.OPTION:
                     "Parse one of the multiple choice options"
-                    # We'll see if this is the correct answer.
-                    is_correct = False
-                    
-                    # Possible leading space.
-                    self.tokens.consume_ws()
-                    
-                    # Maybe this is the right answer.
-                    if self.tokens.peek().type is TokenType.ASTERISK:
-                        self.tokens.eat()
-                        is_correct = True
-                        
-                    # Read the multiple choice letter.
                     letter = self.tokens.get().text
-                    if letter not in ['A', 'B', 'C', 'D']:
-                        self.fail(f"Expected multiple choice letter; got: {letter}")
-                    assert(self.tokens.eat().type is TokenType.PERIOD)
-                    self.tokens.consume_ws()
+                    self.expect(letter in ['A', 'B', 'C', 'D'], f"Bad option letter: {letter}")
+                    self.tokens.eat(TokenType.PERIOD)
+                    text = self.tokens.get_text_until(TokenType.EOL)
+                    self.tokens.eat(TokenType.EOL)
                     
-                    # Record the correct answer.
-                    if is_correct:
-                        self.current_question.set_correct(Option(letter))
-                    
-                    # Read to end of line.
-                    words = self.tokens.get_text_until(TokenType.EOL)
-                    self.tokens.eat()
-                    
-                    # Possibly subsequent indented lines. They all have more than one leading space.
-                    leading_ws = self.tokens.consume_ws()
-                    while leading_ws > 1:
-                        words += " " + self.tokens.get_text_until(TokenType.EOL)
-                        self.tokens.eat()
-                        leading_ws = self.tokens.consume_ws()
-                    
-                    # Push back the whitespace we just read
-                    self.tokens.unget(leading_ws)
-                    
-                    self.current_question.add_option(Option(letter), words)
-                    
-                    # If we read all the options, look for the next question.
+                    self.current_question.add_option(Option(letter), text)
+                    # Interstice follows last letter
                     if letter == 'D':
-                        # Sanity-check
-                        if not self.current_question.is_valid():
-                            self.fail(f"Invalid question:\n{self.current_question.formatted()}")
+                        self.expect(self.current_question.is_valid(), "Question not converted successfully")
+                        self.tokens.eat(TokenType.INTERSTICE)
+                        self.tokens.eat_through(TokenType.EOL)
+                        self.state = State.GROUP_OR_QUESTION
 
-                        # End of file ahead?
-                        consumed = self.tokens.consume_ws()
-                        if self.tokens.peek().type == TokenType.EOF:
-                            self.state = State.DONE
-                        else:
-                            self.tokens.unget(consumed)
-                            self.state = State.GROUP_OR_QUESTION
-                        
                 case State.DONE:
                     "Done reading this file"
                     print(f"Read {len(self.questions)} questions from {self.file_path}.")
@@ -501,10 +442,9 @@ class QuizApp:
 
     def load_questions(self, exam_level: str) -> None:
         cwd = os.getcwd()
-        for filename in os.listdir(os.path.join(cwd, exam_level)):
-            filepath = os.path.join(cwd, exam_level, filename)
-            question_parser = QuestionParser(self.question_pool, filepath)
-            question_parser.parse()
+        filepath = os.path.join(cwd, 'pools', exam_level+'.txt')
+        question_parser = QuestionParser(self.question_pool, filepath)
+        question_parser.parse()
 
         for subelement in self.question_pool.subelements:
             self.subelement_question_map[subelement.name] = []
@@ -532,7 +472,7 @@ class QuizApp:
         keystroke = ""
         while keystroke.lower() != "q":
             question = self.select_random(question_set)
-            print("-----------------------------------------------------------")
+            print("-----------------------------------------------------------\n")
             print(question.formatted())
 
             keystroke_valid = False
@@ -548,9 +488,9 @@ class QuizApp:
                     option = Option(keystroke.upper())
                     correct = self.guess(question, option)
                     if option == correct:
-                        print("Yay\n")
+                        print("\n***Yay*** \o/\n")
                     else:
-                        print(f"Alas. The correct answer was: {correct.value}\n")
+                        print(f"\nAlas. The correct answer was: {correct.value}\n")
 
     def main_menu(self) -> None:
         keystroke = ""
