@@ -585,14 +585,17 @@ class CursesApp:
         action = -1   # getch()
         selected = "" # Selected option
 
+        num_questions = len(question_set)
         question = self._select_question(question_set)
         formatted = question.elements_formatted()
 
         while action != ord('q'):
+            question_number = question_set.index(question) + 1
             self.stdscr.clear()
             # Print the question
             row = 3
             self.stdscr.addstr(row, 0, formatted.number)
+            self.stdscr.addstr(row, 58, f"{question_number} / {num_questions}")
             row += 1
             self.stdscr.addstr(row, 0, formatted.question)
             row += formatted.question.count("\n")
