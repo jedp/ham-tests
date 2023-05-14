@@ -1,6 +1,9 @@
+__pycache__/
 .ham-test-weights.dat
 
 *.sw*
+
+.fleet/
 
 .DS_Store
 
