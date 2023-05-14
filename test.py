@@ -18,9 +18,14 @@ import random
 import re
 import sys
 
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from textwrap import fill, wrap
+
+
+RECENT_QUESTION_COUNT = 10
+
 
 class TokenType(Enum):
     """
@@ -532,7 +537,7 @@ class CursesApp:
         self.stdscr = None
         self.question_pool: QuestionPool = QuestionPool()
         self.scorekeeper = ScoreKeeper()
-        self.recent_questions = RecentQuestions(10)
+        self.recent_question_count = RECENT_QUESTION_COUNT
         self.subelement_question_map = {}
 
         # Load questions
@@ -546,6 +551,19 @@ class CursesApp:
 
         for question in self.question_pool.questions:
             self.subelement_question_map[question.get_subelement_name()].append(question)
+
+        # Sanity-check size of RecentQuestions
+        # These should all have plenty of questions, but just checking.
+        subelement_sizes = defaultdict(int)
+        for question in self.question_pool.questions:
+            subelement_sizes[question.get_subelement_name()] += 1
+        # Make sure the number of questions per subelement will always be
+        # greater than the capacity of the recent questions list.
+        for _, v in subelement_sizes.items():
+            if v < self.recent_question_count:
+                self.recent_question_count = v
+        assert(self.recent_question_count > 0)
+        self.recent_questions = RecentQuestions(self.recent_question_count)
 
     def _load_questions(self, exam_level: str) -> None:
         cwd = os.getcwd()
