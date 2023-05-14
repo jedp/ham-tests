@@ -129,7 +129,7 @@ class Tokenizer:
         tok = self.get()
         assert(tok.type is token_type)
         return tok
-    
+
     def eat_through(self, token_type: TokenType) -> Token:
         self.get_tokens_until(token_type)
         return self.eat(token_type)
@@ -313,7 +313,7 @@ class QuestionParser:
         self.error = ""
         self.state = State.START
         self.questions = question_pool
-        
+
     def fail(self, msg: str):
         raise Exception(msg)
 
@@ -378,7 +378,7 @@ class QuestionParser:
                         self.state = State.QUESTION
                     else:
                         self.state = State.GROUP
-                
+
                 case State.GROUP:
                     "Update the current group name"
                     name = self.tokens.get_text_until(TokenType.SPACE).strip()
@@ -392,7 +392,7 @@ class QuestionParser:
                     # Maybe we will want this in the future.
                     # Add a title to it or something.
                     self.state = State.QUESTION
-                    
+
                 case State.QUESTION:
                     """
                     Parse a question, which is like:
@@ -418,7 +418,7 @@ class QuestionParser:
                     self.current_question.set_correct(Option(answer))
                     self.tokens.eat(TokenType.CLOSE_PAREN)
                     self.tokens.consume_spaces()
-                    
+
                     # Maybe chapter and verse
                     chapter_and_verse = self.tokens.get_text_until(TokenType.EOL)
                     self.tokens.eat(TokenType.EOL)
@@ -440,7 +440,7 @@ class QuestionParser:
                     self.tokens.eat(TokenType.PERIOD)
                     text = self.tokens.get_text_until(TokenType.EOL)
                     self.tokens.eat(TokenType.EOL)
-                    
+
                     self.current_question.add_option(Option(letter), text)
                     # Interstice follows last letter
                     if letter == 'D':
@@ -453,7 +453,7 @@ class QuestionParser:
                     "Done reading this file"
                     print(f"Read {len(self.questions)} questions from {self.file_path}.")
                     return
-                        
+
                 case _:
                     raise Exception(f"Unhandled state: {self.state}")
 
@@ -517,12 +517,25 @@ class ChoiceColor(Enum):
     NO = 1
     YES = 2
 
+class RecentQuestions(list):
+
+    def __init__(self, capacity: int) -> None:
+        super().__init__()
+        self.capacity = capacity
+
+    def include(self, item: any) -> None:
+        if item not in self:
+            self.insert(0, item)
+        if len(self) > self.capacity:
+            self.pop()
+
 class CursesApp:
 
     def __init__(self, exam_level: str) -> None:
         self.stdscr = None
         self.question_pool: QuestionPool = QuestionPool()
         self.scorekeeper = ScoreKeeper()
+        self.recent_questions = RecentQuestions(10)
         self.subelement_question_map = {}
 
         # Load questions
@@ -555,11 +568,16 @@ class CursesApp:
         more likely to be chosen than other questions.
         """
         error_counts = self.scorekeeper.get_scores(question_set)
-        return random.choices(
-            population = question_set,
-            weights = [error_counts[q.number] * 3 + 1 for q in question_set],
-            k = 1
-        )[0]
+        assert(len(question_set) > 10)
+        while True:
+            q = random.choices(
+                population = question_set,
+                weights = [error_counts[q.number] * 3 + 1 for q in question_set],
+                k = 1
+            )[0]
+            if q.number not in self.recent_questions:
+                self.recent_questions.include(q.number)
+                return q
 
     def _guess(self, question: Question, letter: Option) -> Option:
         if question.correct == letter:
