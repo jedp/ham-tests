@@ -257,9 +257,6 @@ class Subelement:
     questions: int
     groups: int
 
-    def contains(self, question: Question) -> bool:
-        return question.number.name.startswith(self.name)
-
 class QuestionPool:
     """
     A collection of [Question]s.
