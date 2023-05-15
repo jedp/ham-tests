@@ -24,7 +24,7 @@ from enum import Enum, auto
 from textwrap import fill, wrap
 
 
-RECENT_QUESTION_COUNT = 10
+RECENT_QUESTION_COUNT = 20
 
 
 class TokenType(Enum):
@@ -469,7 +469,8 @@ class ScoreKeeper:
     Each wrong answer adds an error to the count. Each right answer subtracts one.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, wrong_answer_multiplier = 3) -> None:
+        self.wrong_answer_multiplier = wrong_answer_multiplier
         self.datafile = os.path.join(os.getcwd(), ".ham-test-weights.dat")
         self.errors = {}
 
@@ -509,9 +510,9 @@ class ScoreKeeper:
 
     def wrong_answer(self, question: Question) -> int:
         if question.number not in self.errors:
-            self.errors[question.number] = 1
+            self.errors[question.number] = self.wrong_answer_multiplier
         else:
-            self.errors[question.number] = self.errors[question.number] + 1
+            self.errors[question.number] = self.errors[question.number] + self.wrong_answer_multiplier
         return self.errors[question.number]
 
 
@@ -530,6 +531,11 @@ class RecentQuestions(list):
             self.insert(0, item)
         if len(self) > self.capacity:
             self.pop()
+
+    def last_included(self) -> any:
+        if len(self) > 0:
+            return self[0]
+        return None
 
 class CursesApp:
 
@@ -590,6 +596,15 @@ class CursesApp:
                 weights = [error_counts[q.number] * 3 + 1 for q in question_set],
                 k = 1
             )[0]
+
+            # If a question has a wrong answer count, don't prevent
+            # us from asking it again (as long as it isn't the question
+            # we just asked).
+            if error_counts[q.number] > 0:
+                if len(self.recent_questions) > 0:
+                    if self.recent_questions.last_included() != q.number:
+                        return q
+            # Make sure question wasn't asked recently.
             if q.number not in self.recent_questions:
                 self.recent_questions.include(q.number)
                 return q
