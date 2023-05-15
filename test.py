@@ -289,7 +289,19 @@ class QuestionPool:
     def get_questions_for_element(self, element: Subelement) -> list[Question]:
         return [q for q in self.questions if q.number.startswith(element.name)]
 
+    def get_questions_for_group(self, group: str) -> list[Question]:
+        return [q for q in self.questions if q.number.startswith(group)]
 
+    def get_test_questions(self) -> list[Question]:
+        question_set = []
+        for s in self.subelements:
+            for i in range(0, s.groups):
+                # This is kind of lame. It would be nice if the group names were a field of Subelement.
+                g = chr(ord('A') + i)
+                group_name = s.name + g
+                question_set += random.sample(self.get_questions_for_group(group_name), 1)
+        random.shuffle(question_set)
+        return question_set
 
 class State(Enum):
     """Question Parser state machine states"""
@@ -636,6 +648,8 @@ class CursesApp:
                 i = 1
                 for k, _ in need_work:
                     self.stdscr.addstr(row, 0, f"{i:2d} [{k}]")
+                    i += 1
+                    row += 1
 
             row += 2
             self.stdscr.addstr(row, 0, "[q]")
@@ -643,6 +657,103 @@ class CursesApp:
             self.stdscr.refresh()
             action = self.stdscr.getch()
 
+    def _exam(self) -> None:
+        """
+        Administer a practice test.
+        """
+        self.stdscr.clear()
+        self.stdscr.refresh()
+        choices = '[a, b, c, d, q]'
+        # Keep track of colors for the four options.
+        # They'll be highlighted when selected,
+        # And red or green for wrong/right guesses.
+        colors = {
+            'A': curses.A_NORMAL,
+            'B': curses.A_NORMAL,
+            'C': curses.A_NORMAL,
+            'D': curses.A_NORMAL
+        }
+
+        question_set = self.question_pool.get_test_questions()
+        num_questions = len(question_set)
+        current_question = 0
+        question = question_set[current_question]
+        formatted = question.elements_formatted()
+        action = -1   # getch()
+        selected = "" # Selected option
+        wrong_answers = []
+
+        while action != ord('q'):
+            self.stdscr.clear()
+            # Print the question
+            row = 3
+            self.stdscr.addstr(row, 0, formatted.number)
+            self.stdscr.addstr(row, 58, f"{current_question + 1} / {num_questions}")
+            row += 1
+            self.stdscr.addstr(row, 0, formatted.question)
+            row += formatted.question.count("\n")
+            # Print the four options
+            self.stdscr.addstr(row, 0, formatted.a, colors['A'])
+            row += formatted.a.count("\n")
+            self.stdscr.addstr(row, 0, formatted.b, colors['B'])
+            row += formatted.b.count("\n")
+            self.stdscr.addstr(row, 0, formatted.c, colors['C'])
+            row += formatted.c.count("\n")
+            self.stdscr.addstr(row, 0, formatted.d, colors['D'])
+            row += formatted.d.count("\n")
+            row +=2
+            # Print a menu of choices
+            self.stdscr.addstr(row, 0, choices)
+
+            self.stdscr.refresh()
+            action = self.stdscr.getch()
+
+            if ord('a') <= action <= ord('d'):
+                # Selected a, b, c, or d
+                selected = chr(action).upper()
+                choices = '[a, b, c, d, q; Enter to select]'
+                colors = dict.fromkeys(colors, curses.A_NORMAL)
+                colors[selected] = curses.A_STANDOUT
+
+            elif selected and (action == curses.KEY_ENTER or action == 10 or action == 13):
+                # Hit enter to confirm selection
+                if question.correct.value == selected:
+                    self.scorekeeper.right_answer(question)
+                else:
+                    wrong_answers.append(question)
+                    self.scorekeeper.wrong_answer(question)
+                # Next question
+                current_question += 1
+                # Finished last question?
+                if current_question >= len(question_set):
+                    break
+
+                question = question_set[current_question]
+                formatted = question.elements_formatted()
+                # Reset colors and choices menu
+                colors = dict.fromkeys(colors, curses.A_NORMAL)
+                choices = '[a, b, c, d, q]'
+
+        # Show results
+        self.stdscr.clear()
+        row = 3
+        right = len(question_set) - len(wrong_answers)
+        pct = int(100 * right / len(question_set))
+        self.stdscr.addstr(row, 0, f"Score: {right} / {len(question_set)} = {pct:2d}%")
+        row += 2
+        if pct == 100:
+            self.stdscr.addstr(row, 0, "Woo hoo!")
+        else:
+            self.stdscr.addstr(row, 0, "Wrong answers:")
+            row += 2
+            for q in wrong_answers:
+                self.stdscr.addstr(row, 0, f"- {q.number}")
+                row += 1
+
+        row += 1
+        self.stdscr.addstr(row, 0, "[Any key to continue]")
+        self.stdscr.refresh()
+        self.stdscr.getch()
 
     def _quiz(self, question_set: list[Question]) -> None:
         self.stdscr.clear()
@@ -709,7 +820,7 @@ class CursesApp:
                     colors[question.correct.value] = curses.color_pair(ChoiceColor.YES.value)
                 choices = '[s, q; n for Next]'
 
-            elif action == ord('s'):\
+            elif action == ord('s'):
                 self._summary(question_set)
 
             elif action == ord('n'):
@@ -744,6 +855,7 @@ class CursesApp:
             menu_rows.append(f"[{i}] {subelement.name}: {subelement.title}")
             i += 1
         menu_rows.append("[a] All")
+        menu_rows.append("[e] Exam")
         menu_rows.append("[s] Summary")
         menu_rows.append("[q] Quit")
         selection = 0
@@ -770,6 +882,9 @@ class CursesApp:
 
             elif action == ord('s'):
                 self._summary(self.question_pool.questions)
+
+            elif action == ord('e'):
+                self._exam()
 
             elif ord('1') <= action <= ord('9'):
                 # Sadly you can't select '10' this way.
