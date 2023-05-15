@@ -715,6 +715,9 @@ class CursesApp:
                 colors = dict.fromkeys(colors, curses.A_NORMAL)
                 colors[selected] = curses.A_STANDOUT
 
+            elif action == ord('q'):
+                return
+
             elif selected and (action == curses.KEY_ENTER or action == 10 or action == 13):
                 # Hit enter to confirm selection
                 if question.correct.value == selected:
@@ -878,7 +881,7 @@ class CursesApp:
             action = stdscr.getch()
 
             if action == ord('a'):
-                selection = len(menu_rows) - 2
+                self._quiz(self.question_pool.questions)
 
             elif action == ord('s'):
                 self._summary(self.question_pool.questions)
@@ -902,8 +905,10 @@ class CursesApp:
                 if selection == len(menu_rows) - 1:
                     action = ord('q')
                 elif selection == len(menu_rows) - 2:
-                    # All
-                    stdscr.clear()
+                    self._summary(self.question_pool.questions)
+                elif selection == len(menu_rows) - 3:
+                    self._exam()
+                elif selection == len(menu_rows) - 4:
                     self._quiz(self.question_pool.questions)
                 else:
                     # Single subelement
