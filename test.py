@@ -604,7 +604,7 @@ class CursesApp:
                 if len(self.recent_questions) > 0:
                     if self.recent_questions.last_included() != q.number:
                         return q
-            # Make sure question wasn't asked recently.
+                    # Make sure question wasn't asked recently.
             if q.number not in self.recent_questions:
                 self.recent_questions.include(q.number)
                 return q
@@ -616,10 +616,38 @@ class CursesApp:
             self.scorekeeper.wrong_answer(question)
         return question.correct
 
+    def _summary(self, question_set) -> None:
+        self.stdscr.clear()
+        self.stdscr.refresh()
+
+        scores = self.scorekeeper.get_scores(question_set)
+        need_work = [i for i in sorted(scores.items(), key=lambda item: -item[1]) if i[1] > 0]
+        # Focus on top 10
+        need_work = need_work[:10]
+
+        action = -1   # getch()
+        while action != ord('q'):
+            row = 3
+            if len(need_work) == 0:
+                self.stdscr.addstr(row, 0, "No wrong answers! :)")
+            else:
+                self.stdscr.addstr(row, 0, "These need the most work:")
+                row += 2
+                i = 1
+                for k, _ in need_work:
+                    self.stdscr.addstr(row, 0, f"{i:2d} [{k}]")
+
+            row += 2
+            self.stdscr.addstr(row, 0, "[q]")
+
+            self.stdscr.refresh()
+            action = self.stdscr.getch()
+
+
     def _quiz(self, question_set: list[Question]) -> None:
         self.stdscr.clear()
         self.stdscr.refresh()
-        choices = '[a, b, c, d, q]'
+        choices = '[a, b, c, d, s, q]'
         # Keep track of colors for the four options.
         # They'll be highlighted when selected,
         # And red or green for wrong/right guesses.
@@ -666,7 +694,7 @@ class CursesApp:
             if ord('a') <= action <= ord('d'):
                 # Selected a, b, c, or d
                 selected = chr(action).upper()
-                choices = '[a, b, c, d, q; Enter to select]'
+                choices = '[a, b, c, d, s, q; Enter to select]'
                 colors = dict.fromkeys(colors, curses.A_NORMAL)
                 colors[selected] = curses.A_STANDOUT
 
@@ -679,7 +707,10 @@ class CursesApp:
                     self.scorekeeper.wrong_answer(question)
                     colors[selected] = curses.color_pair(ChoiceColor.NO.value)
                     colors[question.correct.value] = curses.color_pair(ChoiceColor.YES.value)
-                choices = '[q; n for Next]'
+                choices = '[s, q; n for Next]'
+
+            elif action == ord('s'):\
+                self._summary(question_set)
 
             elif action == ord('n'):
                 # Next question
@@ -687,7 +718,7 @@ class CursesApp:
                 formatted = question.elements_formatted()
                 # Reset colors and choices menu
                 colors = dict.fromkeys(colors, curses.A_NORMAL)
-                choices = '[a, b, c, d, q]'
+                choices = '[a, b, c, d, s, q]'
 
     def main(self, stdscr) -> None:
         """
@@ -713,6 +744,7 @@ class CursesApp:
             menu_rows.append(f"[{i}] {subelement.name}: {subelement.title}")
             i += 1
         menu_rows.append("[a] All")
+        menu_rows.append("[s] Summary")
         menu_rows.append("[q] Quit")
         selection = 0
 
@@ -735,6 +767,9 @@ class CursesApp:
 
             if action == ord('a'):
                 selection = len(menu_rows) - 2
+
+            elif action == ord('s'):
+                self._summary(self.question_pool.questions)
 
             elif ord('1') <= action <= ord('9'):
                 # Sadly you can't select '10' this way.
