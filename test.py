@@ -303,6 +303,12 @@ class QuestionPool:
         random.shuffle(question_set)
         return question_set
 
+    def get_all_questions(self) -> list[Question]:
+        return self.questions
+
+    def shuffle(self) -> None:
+        random.shuffle(self.questions)
+
 class State(Enum):
     """Question Parser state machine states"""
     ERROR = -1
@@ -460,7 +466,8 @@ class QuestionParser:
                     if letter == 'D':
                         self.expect(self.current_question.is_valid(), "Question not converted successfully")
                         self.tokens.eat(TokenType.INTERSTICE)
-                        self.tokens.eat_through(TokenType.EOL)
+                        #self.tokens.eat_through(TokenType.EOL)
+                        self.tokens.consume_ws()
                         self.state = State.GROUP_OR_QUESTION
 
                 case State.DONE:
@@ -657,9 +664,12 @@ class CursesApp:
             self.stdscr.refresh()
             action = self.stdscr.getch()
 
-    def _exam(self) -> None:
+    def _exam(self, question_set: list[Question] | None = None) -> None:
         """
         Administer a practice test.
+
+        If question_set is provided, use it. Otherwise generate
+        a legit exam question for the subelement.
         """
         self.stdscr.clear()
         self.stdscr.refresh()
@@ -674,7 +684,8 @@ class CursesApp:
             'D': curses.A_NORMAL
         }
 
-        question_set = self.question_pool.get_test_questions()
+        if question_set is None:
+            question_set = self.question_pool.get_test_questions()
         num_questions = len(question_set)
         current_question = 0
         question = question_set[current_question]
@@ -857,9 +868,9 @@ class CursesApp:
         for subelement in self.question_pool.subelements:
             menu_rows.append(f"[{i}] {subelement.name}: {subelement.title}")
             i += 1
-        menu_rows.append("[a] All")
-        menu_rows.append("[e] Exam")
-        menu_rows.append("[s] Summary")
+        menu_rows.append("[a] Test All questions in random order")
+        menu_rows.append("[e] Practice Exam")
+        menu_rows.append("[s] Summary of errors")
         menu_rows.append("[q] Quit")
         selection = 0
 
@@ -881,10 +892,11 @@ class CursesApp:
             action = stdscr.getch()
 
             if action == ord('a'):
-                self._quiz(self.question_pool.questions)
+                self.question_pool.shuffle()
+                self._exam(self.question_pool.get_all_questions())
 
             elif action == ord('s'):
-                self._summary(self.question_pool.questions)
+                self._summary(self.question_pool.get_all_questions())
 
             elif action == ord('e'):
                 self._exam()
@@ -905,11 +917,12 @@ class CursesApp:
                 if selection == len(menu_rows) - 1:
                     action = ord('q')
                 elif selection == len(menu_rows) - 2:
-                    self._summary(self.question_pool.questions)
+                    self._summary(self.question_pool.get_all_questions())
                 elif selection == len(menu_rows) - 3:
                     self._exam()
                 elif selection == len(menu_rows) - 4:
-                    self._quiz(self.question_pool.questions)
+                    self.question_pool.shuffle()
+                    self._exam(self.question_pool.get_all_questions())
                 else:
                     # Single subelement
                     stdscr.clear()
