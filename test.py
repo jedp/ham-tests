@@ -27,6 +27,11 @@ from textwrap import fill, wrap
 RECENT_QUESTION_COUNT = 20
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise Exception(message)
+
+
 class TokenType(Enum):
     """
     Token types for exam text.
@@ -109,6 +114,14 @@ class Tokenizer:
 
                     self.last += 1
 
+    def text_context(self, backtrack = 10) -> str:
+        start = max(self.index - backtrack, 0)
+        out = ''
+        for i in range(start, self.index):
+            out += self.tokens[i].text
+        return out
+
+
     def peek(self) -> Token:
         if self.index >= self.last:
             return Token(TokenType.EOF, "")
@@ -128,11 +141,13 @@ class Tokenizer:
 
     def unget(self, positions = 1) -> None:
         self.index -= positions
-        assert(self.index >= 0)
+        require(self.index >= 0,
+                "Can't unget; Already at the beginning.")
 
     def eat(self, token_type: TokenType) -> Token:
         tok = self.get()
-        assert(tok.type is token_type)
+        require(tok.type is token_type,
+                f"Expected {token_type}; Got {tok.type} at {self.index} ('{self.text_context()}')")
         return tok
 
     def eat_through(self, token_type: TokenType) -> Token:
@@ -215,9 +230,11 @@ class Question:
         self.chapter_and_verse = text.strip()
 
     def add_option(self, label: Option, text: str) -> None:
-        assert(len(self.options) <= 4)
+        require(len(self.options) <= 4,
+                f"Already have 4 options. Can't add: {label}: {text}")
         for existing, _ in self.options:
-            assert(label is not existing)
+            require(label is not existing,
+                    f"Option {label} already in option set.")
         self.options.append((label, text))
 
     def set_correct(self, label: Option) -> None:
@@ -587,7 +604,8 @@ class CursesApp:
         for _, v in subelement_sizes.items():
             if v < self.recent_question_count:
                 self.recent_question_count = v
-        assert(self.recent_question_count > 0)
+        require(self.recent_question_count > 0,
+                f"Question count is zero.")
         self.recent_questions = RecentQuestions(self.recent_question_count)
 
     def _load_questions(self, exam_level: str) -> None:
@@ -608,7 +626,7 @@ class CursesApp:
         more likely to be chosen than other questions.
         """
         error_counts = self.scorekeeper.get_scores(question_set)
-        assert(len(question_set) > 10)
+        require(len(question_set) > 10, "Expected more than 10 questions.")
         while True:
             q = random.choices(
                 population = question_set,
@@ -934,12 +952,22 @@ class CursesApp:
         self.scorekeeper.store_scores()
 
 
-def main() -> int:
-    app = CursesApp('general')
+def main(grade: str) -> int:
+    grade = grade.lower()
+    require(grade in ['ag', 'ae'], "Grade must be one of at, ag, ae.")
+
+    sources = {
+        'ag': 'general',
+        'ae': 'extra'
+    }
+
+    app = CursesApp(sources[grade])
     curses.wrapper(app.main)
     return 1
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    require(len(sys.argv) > 1,
+            "Usage: test.py [ ag, ae ]")
+    sys.exit(main(sys.argv[1]))
 
